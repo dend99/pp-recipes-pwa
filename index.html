@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
   <title>ПП Рецепты — быстрые блюда для похудения</title>
   <meta name="description" content="Быстрые и вкусные ПП-рецепты с расчётом КБЖУ. Подбор блюда по тому, что есть в холодильнике. Список покупок. Работает оффлайн.">
-  <meta name="theme-color" content="#059669">
+  <meta name="theme-color" content="#F6F8FB" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" type="image/png" href="./icons/icon-192.png">
   <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
@@ -215,6 +216,7 @@
   <!-- ============ Модалка рецепта ============ -->
   <div id="recipe-modal" class="modal">
     <div class="modal-card">
+      <div class="modal-grabber"></div>
       <button id="modal-close" class="modal-close" aria-label="Закрыть">✕</button>
       <div id="modal-content"></div>
     </div>

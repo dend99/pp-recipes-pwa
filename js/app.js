@@ -94,25 +94,40 @@ function nutritionOf(recipe) {
 }
 
 // ---- Картинка-заглушка (SVG, оффлайн) --------------------------------------
+// Мемоизируем: одна и та же заглушка строится один раз, а не на каждый рендер
+// (важно для плавности при поиске/скролле 84 карточек).
+const _phCache = new Map();
+const PH_PALETTES = [
+  ['#34C759', '#248A3D'], ['#FF9F0A', '#C8730A'], ['#0A84FF', '#0060DF'],
+  ['#FF375F', '#C81E45'], ['#BF5AF2', '#8E39C0'], ['#64D2FF', '#0A84FF'],
+  ['#FFD60A', '#E0A100'], ['#5E5CE6', '#3634A3'],
+];
 function placeholderImage(recipe) {
-  const palettes = [
-    ['#34d399', '#059669'], ['#fbbf24', '#d97706'], ['#60a5fa', '#2563eb'],
-    ['#f472b6', '#db2777'], ['#a78bfa', '#7c3aed'], ['#fb7185', '#e11d48'],
-  ];
-  let h = 0; for (const ch of recipe.id) h = (h * 31 + ch.charCodeAt(0)) & 0xffff;
-  const [c1, c2] = palettes[h % palettes.length];
   const emoji = recipe.emoji || MEALS[recipe.meal]?.emoji || '🍽️';
+  const key = recipe.id + '|' + emoji;
+  const hit = _phCache.get(key);
+  if (hit) return hit;
+  let h = 0; for (const ch of key) h = (h * 31 + ch.charCodeAt(0)) & 0xffff;
+  const [c1, c2] = PH_PALETTES[h % PH_PALETTES.length];
   const svg =
     `<svg xmlns='http://www.w3.org/2000/svg' width='400' height='260'>` +
     `<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>` +
     `<stop offset='0' stop-color='${c1}'/><stop offset='1' stop-color='${c2}'/>` +
     `</linearGradient></defs>` +
     `<rect width='400' height='260' fill='url(#g)'/>` +
-    `<text x='200' y='150' font-size='110' text-anchor='middle'>${emoji}</text>` +
+    `<text x='200' y='158' font-size='120' text-anchor='middle'>${emoji}</text>` +
     `</svg>`;
-  return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+  const uri = 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+  _phCache.set(key, uri);
+  return uri;
 }
 const recipeImage = (r) => r.image || placeholderImage(r);
+
+/** Небольшой дебаунс для поисковых полей — меньше перерисовок, плавнее ввод. */
+function debounce(fn, ms = 130) {
+  let t;
+  return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+}
 
 // ============================================================================
 // Инициализация
@@ -208,17 +223,44 @@ function switchTab(name) {
 // Вкладка «Холодильник» — подбор рецепта по ингредиентам и приёму пищи
 // ============================================================================
 function bindFridge() {
-  $('#fridge-search').addEventListener('input', renderFridgeIngredients);
+  $('#fridge-search').addEventListener('input', debounce(renderFridgeIngredients, 130));
   $('#fridge-find').addEventListener('click', findRecipes);
   $('#fridge-clear').addEventListener('click', () => {
     fridge = []; save(STORE.fridge, fridge);
     renderFridgeIngredients(); $('#fridge-results').innerHTML = '';
   });
-  $$('#meal-filter .chip').forEach((chip) => {
-    chip.addEventListener('click', () => {
-      chip.classList.toggle('active');
-    });
+  // Делегирование: один обработчик на всё облако продуктов — переключаем чип
+  // на месте, без перерисовки 114 кнопок (главный источник лагов).
+  $('#fridge-ingredients').addEventListener('click', (e) => {
+    const b = e.target.closest('.ing-chip');
+    if (!b) return;
+    const id = b.dataset.id;
+    if (fridge.includes(id)) fridge = fridge.filter((x) => x !== id);
+    else fridge.push(id);
+    b.classList.toggle('on', fridge.includes(id));
+    save(STORE.fridge, fridge);
+    updateFridgeCount();
   });
+  $('#meal-filter').addEventListener('click', (e) => {
+    const chip = e.target.closest('.chip');
+    if (chip) chip.classList.toggle('active');
+  });
+  // делегирование на результатах подбора: «докупить» и открытие карточки
+  $('#fridge-results').addEventListener('click', (e) => {
+    const add = e.target.closest('.miss-add');
+    if (add) {
+      e.stopPropagation();
+      addToShopping(add.dataset.ing);
+      add.textContent = '✓ в списке'; add.classList.add('added'); add.disabled = true;
+      return;
+    }
+    const card = e.target.closest('.rcard');
+    if (card) openRecipe(card.dataset.open);
+  });
+}
+
+function updateFridgeCount() {
+  $('#fridge-count').textContent = fridge.length ? `Выбрано: ${fridge.length}` : '';
 }
 
 function renderFridgeIngredients() {
@@ -227,24 +269,13 @@ function renderFridgeIngredients() {
   const chosen = new Set(fridge);
   const list = INGREDIENTS
     .filter(([, name]) => !q || name.toLowerCase().includes(q))
-    .sort((a, b) => a[2].localeCompare(b[2]));
+    .sort((a, b) => a[1].localeCompare(b[1]));
 
-  box.innerHTML = list.map(([id, name, cat]) => {
-    const on = chosen.has(id);
-    return `<button class="ing-chip ${on ? 'on' : ''}" data-id="${id}">` +
-      `${on ? '✓ ' : ''}${esc(name)}</button>`;
-  }).join('') || `<p class="muted">Ничего не найдено</p>`;
+  box.innerHTML = list.map(([id, name]) =>
+    `<button class="ing-chip ${chosen.has(id) ? 'on' : ''}" data-id="${id}">${esc(name)}</button>`
+  ).join('') || `<p class="muted">Ничего не найдено</p>`;
 
-  $$('.ing-chip', box).forEach((b) => b.addEventListener('click', () => {
-    const id = b.dataset.id;
-    if (fridge.includes(id)) fridge = fridge.filter((x) => x !== id);
-    else fridge.push(id);
-    save(STORE.fridge, fridge);
-    renderFridgeIngredients();
-    $('#fridge-count').textContent = fridge.length
-      ? `Выбрано: ${fridge.length}` : '';
-  }));
-  $('#fridge-count').textContent = fridge.length ? `Выбрано: ${fridge.length}` : '';
+  updateFridgeCount();
 }
 
 function selectedMeals() {
@@ -291,7 +322,7 @@ function findRecipes() {
         : `<div class="have-all">✓ Всё есть!</div>`;
       return `<article class="rcard" data-open="${r.id}">
         <div class="rcard-badge ${pct === 100 ? 'full' : ''}">${pct}%</div>
-        <img class="rcard-img" src="${recipeImage(r)}" alt="">
+        <img class="rcard-img" src="${recipeImage(r)}" alt="" loading="lazy" decoding="async" width="120" height="120">
         <div class="rcard-body">
           <div class="rcard-meal">${MEALS[r.meal].emoji} ${MEALS[r.meal].label} · ⏱ ${r.time} мин</div>
           <h4>${esc(r.title)}</h4>
@@ -300,26 +331,24 @@ function findRecipes() {
         </div>
       </article>`;
     }).join('');
-
-  bindCardOpen(box);
-  $$('.miss-add', box).forEach((b) => b.addEventListener('click', (e) => {
-    e.stopPropagation();
-    addToShopping(b.dataset.ing);
-    b.textContent = '✓ в списке'; b.classList.add('added'); b.disabled = true;
-  }));
 }
 
 // ============================================================================
 // Вкладка «Рецепты» — просмотр, поиск по ингредиентам, открытие карточки
 // ============================================================================
 function bindRecipes() {
-  $('#recipe-search').addEventListener('input', renderRecipes);
-  $$('#recipe-meal-filter .chip').forEach((chip) => {
-    chip.addEventListener('click', () => {
-      $$('#recipe-meal-filter .chip').forEach((c) => c.classList.remove('active'));
-      chip.classList.add('active');
-      renderRecipes();
-    });
+  $('#recipe-search').addEventListener('input', debounce(renderRecipes, 130));
+  $('#recipe-meal-filter').addEventListener('click', (e) => {
+    const chip = e.target.closest('.chip');
+    if (!chip) return;
+    $$('#recipe-meal-filter .chip').forEach((c) => c.classList.remove('active'));
+    chip.classList.add('active');
+    renderRecipes();
+  });
+  // делегированное открытие карточки
+  $('#recipe-list').addEventListener('click', (e) => {
+    const card = e.target.closest('.rcard');
+    if (card) openRecipe(card.dataset.open);
   });
 }
 
@@ -348,7 +377,7 @@ function renderRecipes() {
   box.innerHTML = filtered.map((r) => {
     const n = nutritionOf(r).per;
     return `<article class="rcard" data-open="${r.id}">
-      <img class="rcard-img" src="${recipeImage(r)}" alt="">
+      <img class="rcard-img" src="${recipeImage(r)}" alt="" loading="lazy" decoding="async" width="120" height="120">
       <div class="rcard-body">
         <div class="rcard-meal">${MEALS[r.meal].emoji} ${MEALS[r.meal].label} · ⏱ ${r.time} мин · 🍽 ${r.servings} порц.</div>
         <h4>${esc(r.title)}</h4>
@@ -357,13 +386,6 @@ function renderRecipes() {
       </div>
     </article>`;
   }).join('');
-
-  bindCardOpen(box);
-}
-
-function bindCardOpen(root) {
-  $$('.rcard', root).forEach((card) =>
-    card.addEventListener('click', () => openRecipe(card.dataset.open)));
 }
 
 // ---- Модальное окно рецепта -------------------------------------------------
