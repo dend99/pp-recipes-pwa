@@ -16,13 +16,22 @@ const STORE = {
   shopping: 'pp_shopping_v1',
   fridge: 'pp_fridge_v1',
   deleted: 'pp_deleted_bank_v1', // id рецептов банка, удалённых пользователем
+  diary: 'pp_diary_v1',          // { 'YYYY-MM-DD': [ {id,rid,title,meal,base:{kcal,p,f,c},portions} ] }
+  goal: 'pp_goal_v1',            // цель по калориям
+  shortcut: 'pp_shortcut_v1',    // имя Команды Shortcuts
 };
+const DEFAULT_GOAL = 1800;
+const DEFAULT_SHORTCUT = 'ПП Здоровье';
 
 // ---- Состояние --------------------------------------------------------------
 let recipes = [];        // все рецепты (seed + пользовательские)
 let shopping = [];       // [{id, name, cat, checked, manual, g}]
 let fridge = [];         // ids ингредиентов «в холодильнике»
 let draftIngredients = []; // черновик при добавлении рецепта: [{id, g}]
+let diary = {};          // журнал питания по датам
+let goalKcal = DEFAULT_GOAL;
+let shortcutName = DEFAULT_SHORTCUT;
+let diaryDate = '';      // выбранная дата (YYYY-MM-DD)
 
 // ---- Утилиты ----------------------------------------------------------------
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -149,18 +158,24 @@ function init() {
   reconcileBank();     // ВСЕГДА гарантируем наличие всех рецептов банка (кроме удалённых)
   shopping = load(STORE.shopping, []);
   fridge = load(STORE.fridge, []);
+  diary = load(STORE.diary, {});
+  goalKcal = load(STORE.goal, DEFAULT_GOAL);
+  shortcutName = load(STORE.shortcut, DEFAULT_SHORTCUT);
+  diaryDate = todayStr();
 
   bindTabs();
   bindFridge();
   bindRecipes();
   bindAddForm();
   bindShopping();
+  bindDiary();
   bindPullToRefresh();
 
   renderFridgeIngredients();
   renderRecipes();
   renderShopping();
   renderAddIngredientOptions();
+  renderDiary();
 
   registerSW();
 }
@@ -410,6 +425,11 @@ function openRecipe(id) {
       </div>
       <p class="kbju-note">на порцию (~${nut.per.weight} г) · на 100 г: ${nut.per100.kcal} ккал</p>
 
+      <div class="modal-cta">
+        <button class="btn btn-primary" id="modal-add-diary">🍽️ Съедено — в дневник</button>
+        <button class="btn btn-secondary" id="modal-health">❤️ Записать в Здоровье</button>
+      </div>
+
       <h3>Ингредиенты <span class="muted">(на ${r.servings} порц.)</span></h3>
       <ul class="ing-list">
         ${r.ingredients.map((i) => {
@@ -434,6 +454,15 @@ function openRecipe(id) {
     r.ingredients.forEach((i) => addToShopping(i.id, i.g));
     $('#modal-add-shopping').textContent = '✓ Добавлено в покупки';
     $('#modal-add-shopping').disabled = true;
+  });
+  $('#modal-add-diary').addEventListener('click', () => {
+    addToDiary(r);
+    $('#modal-add-diary').textContent = '✓ Записано в дневник';
+    $('#modal-add-diary').disabled = true;
+  });
+  $('#modal-health').addEventListener('click', () => {
+    const p = nutritionOf(r).per;
+    logToHealth(p.kcal, p.p, p.f, p.c, r.title);
   });
   const del = $('#modal-delete');
   if (del) del.addEventListener('click', () => {
@@ -773,6 +802,153 @@ function updateShopBadge() {
   const n = shopping.filter((s) => !s.checked).length;
   const badge = $('#shop-badge');
   badge.textContent = n; badge.style.display = n ? 'flex' : 'none';
+}
+
+// ============================================================================
+// Вкладка «Дневник» — журнал питания + запись в Apple Health через Shortcuts
+// ============================================================================
+function pad2(n) { return String(n).padStart(2, '0'); }
+function toDateStr(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
+function todayStr() { return toDateStr(new Date()); }
+function shiftDate(str, days) {
+  const [y, m, d] = str.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() + days);
+  return toDateStr(dt);
+}
+function dateLabel(str) {
+  if (str === todayStr()) return 'Сегодня';
+  if (str === shiftDate(todayStr(), -1)) return 'Вчера';
+  const [y, m, d] = str.split('-');
+  return `${d}.${m}.${y}`;
+}
+
+function bindDiary() {
+  $('#diary-prev').addEventListener('click', () => { diaryDate = shiftDate(diaryDate, -1); renderDiary(); });
+  $('#diary-next').addEventListener('click', () => {
+    const nd = shiftDate(diaryDate, 1);
+    if (nd > todayStr()) return; // не заглядываем в будущее
+    diaryDate = nd; renderDiary();
+  });
+  $('#diary-health').addEventListener('click', () => {
+    const t = diaryTotals(diaryDate);
+    if (t.kcal <= 0) { toast('За этот день пока ничего нет'); return; }
+    logToHealth(t.kcal, t.p, t.f, t.c, `Питание за ${dateLabel(diaryDate)}`);
+  });
+  const gi = $('#goal-input');
+  gi.value = goalKcal || '';
+  gi.addEventListener('input', debounce(() => {
+    goalKcal = Math.max(0, parseInt(gi.value) || 0) || DEFAULT_GOAL;
+    save(STORE.goal, goalKcal); renderDiary();
+  }, 250));
+  const si = $('#shortcut-input');
+  si.value = shortcutName || '';
+  si.addEventListener('input', debounce(() => {
+    shortcutName = si.value.trim() || DEFAULT_SHORTCUT;
+    save(STORE.shortcut, shortcutName);
+  }, 250));
+
+  // делегирование действий в списке дневника
+  $('#diary-list').addEventListener('click', (e) => {
+    const row = e.target.closest('.diary-item');
+    if (!row) return;
+    const id = row.dataset.id;
+    if (e.target.closest('.diary-del')) return removeDiaryEntry(id);
+    if (e.target.closest('.diary-plus')) return changePortions(id, +0.5);
+    if (e.target.closest('.diary-minus')) return changePortions(id, -0.5);
+    if (e.target.closest('.diary-heart')) {
+      const entry = (diary[diaryDate] || []).find((x) => x.id === id);
+      if (entry) { const k = entry.portions; logToHealth(entry.base.kcal * k, entry.base.p * k, entry.base.f * k, entry.base.c * k, entry.title); }
+    }
+  });
+}
+
+function addToDiary(recipe) {
+  const per = nutritionOf(recipe).per;
+  const day = diary[diaryDate] || (diary[diaryDate] = []);
+  day.push({
+    id: uid(), rid: recipe.id, title: recipe.title, meal: recipe.meal,
+    base: { kcal: per.kcal, p: per.p, f: per.f, c: per.c }, portions: 1,
+  });
+  save(STORE.diary, diary);
+  renderDiary();
+  toast(`✓ «${recipe.title}» — в дневник`);
+}
+function removeDiaryEntry(id) {
+  diary[diaryDate] = (diary[diaryDate] || []).filter((x) => x.id !== id);
+  save(STORE.diary, diary); renderDiary();
+}
+function changePortions(id, delta) {
+  const entry = (diary[diaryDate] || []).find((x) => x.id === id);
+  if (!entry) return;
+  entry.portions = Math.max(0.5, Math.round((entry.portions + delta) * 2) / 2);
+  save(STORE.diary, diary); renderDiary();
+}
+function diaryTotals(date) {
+  const t = { kcal: 0, p: 0, f: 0, c: 0 };
+  for (const e of diary[date] || []) {
+    t.kcal += e.base.kcal * e.portions;
+    t.p += e.base.p * e.portions;
+    t.f += e.base.f * e.portions;
+    t.c += e.base.c * e.portions;
+  }
+  return { kcal: Math.round(t.kcal), p: Math.round(t.p), f: Math.round(t.f), c: Math.round(t.c) };
+}
+
+function renderDiary() {
+  $('#diary-date').textContent = dateLabel(diaryDate);
+  $('#diary-next').disabled = diaryDate >= todayStr();
+
+  const t = diaryTotals(diaryDate);
+  $('#diary-kcal').textContent = t.kcal;
+  $('#diary-goal').textContent = goalKcal;
+  $('#diary-p').textContent = t.p;
+  $('#diary-f').textContent = t.f;
+  $('#diary-c').textContent = t.c;
+  const pct = goalKcal ? Math.min(100, Math.round(t.kcal / goalKcal * 100)) : 0;
+  const bar = $('#diary-bar');
+  bar.style.width = pct + '%';
+  bar.classList.toggle('over', t.kcal > goalKcal);
+  const left = goalKcal - t.kcal;
+  $('#diary-left').textContent = left >= 0 ? `осталось ${left}` : `перебор ${-left}`;
+
+  const list = $('#diary-list');
+  const items = diary[diaryDate] || [];
+  if (items.length === 0) {
+    list.innerHTML = `<p class="muted">Пусто. Откройте рецепт и нажмите «Съедено — в дневник» 🍽️</p>`;
+    return;
+  }
+  list.innerHTML = items.map((e) => {
+    const kcal = Math.round(e.base.kcal * e.portions);
+    const portionsLabel = e.portions === 1 ? '' : `<span class="diary-portions">×${e.portions}</span>`;
+    return `<div class="diary-item" data-id="${e.id}">
+      <div class="diary-main">
+        <div class="diary-title">${MEALS[e.meal]?.emoji || '🍽️'} ${esc(e.title)} ${portionsLabel}</div>
+        <div class="diary-kbju">${kcal} ккал · Б ${Math.round(e.base.p * e.portions)} · Ж ${Math.round(e.base.f * e.portions)} · У ${Math.round(e.base.c * e.portions)}</div>
+      </div>
+      <div class="diary-actions">
+        <button class="diary-step diary-minus" aria-label="Меньше">−</button>
+        <button class="diary-step diary-plus" aria-label="Больше">+</button>
+        <button class="diary-heart" aria-label="В Здоровье">❤️</button>
+        <button class="diary-del" aria-label="Удалить">✕</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+/**
+ * Запись КБЖУ в Apple Health через приложение «Команды» (Shortcuts).
+ * Открывает Команду с именем shortcutName и передаёт ей строку "ккал,Б,Ж,У".
+ * Работает без Apple Developer — нужна лишь один раз настроенная Команда.
+ */
+function logToHealth(kcal, p, f, c, label) {
+  const payload = [Math.round(kcal), Math.round(p), Math.round(f), Math.round(c)].join(',');
+  const url = `shortcuts://run-shortcut?name=${encodeURIComponent(shortcutName)}&input=text&text=${encodeURIComponent(payload)}`;
+  // открываем схему Shortcuts (на iOS запустит Команду и вернётся обратно)
+  const a = document.createElement('a');
+  a.href = url; a.rel = 'noopener';
+  document.body.appendChild(a); a.click(); a.remove();
+  toast(`❤️ ${label || 'Отправлено'} → Здоровье (${Math.round(kcal)} ккал)`);
 }
 
 // ---- Тосты ------------------------------------------------------------------

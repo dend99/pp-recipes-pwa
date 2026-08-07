@@ -260,6 +260,51 @@ input:focus, select:focus, textarea:focus { background: var(--card); box-shadow:
 .shop-actions { display: flex; gap: 10px; }
 .shop-actions .btn { flex: 1; }
 
+/* ---- Modal CTA (в дневник / в здоровье) ---- */
+.modal-cta { display: flex; gap: 10px; margin: 6px 0 4px; }
+.modal-cta .btn { flex: 1; margin-top: 0; }
+
+/* ---- Дневник ---- */
+.date-nav { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+.date-btn { width: 44px; height: 40px; border: none; border-radius: var(--radius-md); background: var(--fill); color: var(--text); font-size: 1.3rem; font-weight: 700; cursor: pointer; transition: transform .12s var(--ease); }
+.date-btn:active { transform: scale(.92); }
+.date-btn:disabled { opacity: .35; }
+.date-label { font-weight: 750; font-size: 1.05rem; letter-spacing: -0.02em; }
+
+.goal-card { background: var(--card); border: 0.5px solid var(--hairline); border-radius: var(--radius-lg); padding: 16px; box-shadow: var(--shadow-card); }
+.goal-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.goal-kcal { font-size: 1.5rem; font-weight: 850; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.goal-of { font-size: .9rem; font-weight: 600; color: var(--muted); }
+.goal-of b { color: var(--text-2); }
+.goal-left { font-size: .82rem; font-weight: 650; color: var(--muted); }
+.goal-bar { height: 12px; border-radius: 999px; background: var(--fill); overflow: hidden; margin: 12px 0 14px; }
+.goal-bar-fill { height: 100%; width: 0; border-radius: 999px; background: linear-gradient(90deg, var(--green), var(--green-deep)); transition: width .5s var(--ease); }
+.goal-bar-fill.over { background: linear-gradient(90deg, var(--amber), var(--red)); }
+.goal-macros { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
+.goal-macros > div { background: var(--tint); border-radius: var(--radius-md); padding: 10px 4px; text-align: center; }
+.goal-macros span { display: block; font-size: 1.1rem; font-weight: 800; color: var(--tint-text); font-variant-numeric: tabular-nums; }
+.goal-macros small { display: block; font-size: .68rem; color: var(--muted); margin-top: 2px; font-weight: 600; }
+.goal-card .btn-secondary { margin-top: 0; }
+
+.diary-list { margin: 18px 0; }
+.diary-item { display: flex; align-items: center; gap: 10px; background: var(--card); border: 0.5px solid var(--hairline); border-radius: var(--radius-md); padding: 11px 13px; margin-bottom: 8px; box-shadow: var(--shadow-card); }
+.diary-main { flex: 1; min-width: 0; }
+.diary-title { font-size: .95rem; font-weight: 650; letter-spacing: -0.01em; }
+.diary-portions { color: var(--tint-text); font-weight: 700; }
+.diary-kbju { font-size: .8rem; color: var(--muted); margin-top: 2px; }
+.diary-actions { display: flex; align-items: center; gap: 4px; flex: none; }
+.diary-step, .diary-heart, .diary-del { border: none; background: var(--fill); border-radius: 9px; width: 30px; height: 30px; font-size: .95rem; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text); }
+.diary-del { color: var(--red); background: transparent; }
+.diary-heart { background: transparent; }
+.diary-step:active, .diary-heart:active, .diary-del:active { transform: scale(.9); }
+
+.help { margin-top: 16px; }
+.help summary { cursor: pointer; font-weight: 650; color: var(--tint-text); font-size: .92rem; padding: 6px 0; list-style: none; }
+.help summary::-webkit-details-marker { display: none; }
+.help-steps { margin: 8px 0; padding-left: 20px; }
+.help-steps li { padding: 4px 0; font-size: .9rem; }
+.help code { background: var(--fill); padding: 1px 6px; border-radius: 6px; font-size: .85em; }
+
 /* ---- Tab bar (glass) ---- */
 .tabbar {
   position: fixed; bottom: 0; left: 0; right: 0; z-index: 30;
@@ -270,11 +315,12 @@ input:focus, select:focus, textarea:focus { background: var(--card); box-shadow:
   border-top: 0.5px solid var(--hairline);
 }
 .tab-btn {
-  position: relative; flex: 1; border: none; background: transparent; color: var(--muted);
+  position: relative; flex: 1; min-width: 0; border: none; background: transparent; color: var(--muted);
   display: flex; flex-direction: column; align-items: center; gap: 3px;
-  padding: 9px 0; font-size: .66rem; font-weight: 650; cursor: pointer; height: var(--tabbar-h);
+  padding: 9px 2px; font-size: .64rem; font-weight: 650; cursor: pointer; height: var(--tabbar-h);
   transition: color .2s;
 }
+.tab-btn > span:last-child { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab-btn.active { color: var(--green); }
 .tab-btn:active .tab-ico { transform: scale(.86); }
 .tab-ico { font-size: 1.4rem; line-height: 1; transition: transform .15s var(--ease); }

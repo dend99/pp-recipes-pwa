@@ -194,6 +194,62 @@
         <button id="shop-clear-all" class="btn btn-ghost danger">Очистить всё</button>
       </div>
     </section>
+
+    <!-- ============ ДНЕВНИК ============ -->
+    <section id="tab-diary" class="tab-panel">
+      <div class="panel-intro">
+        <h2>Дневник питания</h2>
+        <p class="muted">Отмечайте съеденное — считаем КБЖУ за день.</p>
+      </div>
+
+      <div class="date-nav">
+        <button id="diary-prev" class="date-btn" aria-label="Предыдущий день">‹</button>
+        <div id="diary-date" class="date-label">Сегодня</div>
+        <button id="diary-next" class="date-btn" aria-label="Следующий день">›</button>
+      </div>
+
+      <div class="goal-card">
+        <div class="goal-top">
+          <div class="goal-kcal"><span id="diary-kcal">0</span> <span class="goal-of">/ <b id="diary-goal">1800</b> ккал</span></div>
+          <div id="diary-left" class="goal-left"></div>
+        </div>
+        <div class="goal-bar"><div id="diary-bar" class="goal-bar-fill"></div></div>
+        <div class="goal-macros">
+          <div><span id="diary-p">0</span><small>белки</small></div>
+          <div><span id="diary-f">0</span><small>жиры</small></div>
+          <div><span id="diary-c">0</span><small>углев.</small></div>
+        </div>
+        <button id="diary-health" class="btn btn-secondary">❤️ Записать день в Здоровье</button>
+      </div>
+
+      <div id="diary-list" class="diary-list"></div>
+
+      <div class="io-block">
+        <h3>Настройки</h3>
+        <div class="grid-2">
+          <label class="field">
+            <span class="field-label">Цель, ккал/день</span>
+            <input id="goal-input" type="number" min="0" inputmode="numeric" placeholder="1800">
+          </label>
+          <label class="field">
+            <span class="field-label">Имя Команды</span>
+            <input id="shortcut-input" type="text" placeholder="ПП Здоровье">
+          </label>
+        </div>
+        <details class="help">
+          <summary>❤️ Как настроить запись в Apple Health (один раз)</summary>
+          <ol class="help-steps">
+            <li>Откройте приложение <b>«Команды»</b> (Shortcuts) на iPhone → «+» — новая команда.</li>
+            <li>Назовите её точно так же, как в поле «Имя Команды» выше (по умолчанию <b>ПП Здоровье</b>).</li>
+            <li>Добавьте действие <b>«Разделить текст»</b>: входные данные — «Вход команды», разделитель — <b>Пользовательский</b> = запятая «,».</li>
+            <li>Добавьте <b>«Записать образец здоровья»</b> → тип <b>Питание › Энергия рациона</b>, значение = <b>Элемент 1</b> из разделённого текста (ккал).</li>
+            <li>Ещё три раза «Записать образец здоровья»: <b>Белки</b> = Элемент 2, <b>Жиры общие</b> = Элемент 3, <b>Углеводы</b> = Элемент 4.</li>
+            <li>Готово. Теперь кнопка «Записать в Здоровье» в приложении будет открывать эту Команду с уже подставленными числами.</li>
+          </ol>
+          <p class="muted">Приложение передаёт в Команду строку вида <code>ккал,белки,жиры,углеводы</code> — например <code>430,32,14,40</code>.</p>
+        </details>
+      </div>
+    </section>
   </main>
 
   <!-- ============ Нижняя навигация ============ -->
@@ -203,6 +259,9 @@
     </button>
     <button class="tab-btn" data-tab="recipes">
       <span class="tab-ico">📖</span><span>Рецепты</span>
+    </button>
+    <button class="tab-btn" data-tab="diary">
+      <span class="tab-ico">📊</span><span>Дневник</span>
     </button>
     <button class="tab-btn" data-tab="add">
       <span class="tab-ico">➕</span><span>Добавить</span>
