@@ -18,10 +18,11 @@ const STORE = {
   deleted: 'pp_deleted_bank_v1', diary: 'pp_diary_v1', goal: 'pp_goal_v1',
   shortcut: 'pp_shortcut_v1', freq: 'pp_fridge_freq_v1', fav: 'pp_favorites_v1',
   macro: 'pp_macro_goals_v1', customIng: 'pp_custom_ing_v1', importServer: 'pp_import_server_v1',
+  authKey: 'pp_auth_key_v1',
 };
 const DEFAULT_GOAL = 1800;
 const DEFAULT_SHORTCUT = 'ПП Здоровье';
-const DEFAULT_IMPORT_SERVER = 'http://localhost:8099';
+const DEFAULT_IMPORT_SERVER = 'https://46-62-161-216.sslip.io';
 const SEED_VERSION = 2;
 const STORE_SEEDV = 'pp_seed_v';
 
@@ -33,6 +34,7 @@ let freq = {}, favorites = [];
 let diaryDate = '';
 let customIngredients = {}, importServerUrl = DEFAULT_IMPORT_SERVER;
 let importDraft = null, importPollTimer = null;
+let authKey = null;
 
 // ---- Утилиты ----------------------------------------------------------------
 const $ = (s, r = document) => r.querySelector(s);
@@ -42,6 +44,32 @@ function load(k, f) { try { const v = JSON.parse(localStorage.getItem(k)); retur
 function save(k, v) { localStorage.setItem(k, JSON.stringify(v)); }
 function uid() { return 'r_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function debounce(fn, ms = 130) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+async function sha256Hex(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// ---- Логин (замок доступа + ключ сервера импорта) ---------------------------
+function initAuth() { authKey = load(STORE.authKey, null); $('#login-screen').classList.toggle('open', !authKey); }
+function bindLogin() {
+  $('#login-form').addEventListener('submit', onLoginSubmit);
+  $('#login-submit').addEventListener('click', onLoginSubmit);
+}
+async function onLoginSubmit(e) {
+  e.preventDefault();
+  const pass = $('#login-pass').value;
+  if (!pass) return;
+  authKey = await sha256Hex(pass);
+  save(STORE.authKey, authKey);
+  $('#login-pass').value = '';
+  $('#login-screen').classList.remove('open');
+}
+function requireLoginAgain(message) {
+  authKey = null; localStorage.removeItem(STORE.authKey);
+  $('#login-screen').classList.add('open');
+  if (message) importFailed(message);
+}
+function logout() { closeSheet('#settings-sheet'); requireLoginAgain(); toast('Вы вышли'); }
 
 // ---- КБЖУ -------------------------------------------------------------------
 function computeNutrition(recipe) {
@@ -116,6 +144,7 @@ function init() {
   freq = load(STORE.freq, {}); favorites = load(STORE.fav, []); diaryDate = todayStr();
   customIngredients = load(STORE.customIng, {}); importServerUrl = load(STORE.importServer, DEFAULT_IMPORT_SERVER);
   mergeCustomIngredients();
+  initAuth(); bindLogin();
 
   bindTabs(); bindToday(); bindFridge(); bindRecipes(); bindShopping(); bindAddSheet(); bindSettings(); bindImportSheet(); bindPullToRefresh(); bindGlobal();
   renderToday(); renderFridge(); renderRecipes(); renderShopping(); renderAddOptions();
@@ -178,9 +207,12 @@ function dateLabel(str) {
   const [y, m, d] = str.split('-').map(Number); const dt = new Date(y, m - 1, d);
   return `${WEEK[dt.getDay()]}, ${d} ${MONTHS[m - 1]}`;
 }
+function defaultMacros(kcal) {
+  return { p: Math.round(kcal * 0.30 / 4), f: Math.round(kcal * 0.30 / 9), c: Math.round(kcal * 0.40 / 4) };
+}
 function getMacroGoals() {
   if (macroGoals && macroGoals.p) return macroGoals;
-  return { p: Math.round(goalKcal * 0.30 / 4), f: Math.round(goalKcal * 0.30 / 9), c: Math.round(goalKcal * 0.40 / 4) };
+  return defaultMacros(goalKcal);
 }
 function diaryTotals(date) {
   const t = { kcal: 0, p: 0, f: 0, c: 0 };
@@ -376,6 +408,8 @@ const ICN = {
   heartFill: `<svg viewBox="0 0 24 24"><path d="M12 20s-7-4.6-7-9.5A3.8 3.8 0 0 1 12 8a3.8 3.8 0 0 1 7-2.5C19 10.4 12 20 12 20Z" fill="currentColor"/></svg>`,
   dots: `<svg viewBox="0 0 24 24" fill="none"><circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/></svg>`,
   bag: `<svg viewBox="0 0 24 24" fill="none"><path d="M6.5 8.5h11l-1 11H7.5l-1-11Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M9.3 8.5V6.8a2.7 2.7 0 0 1 5.4 0v1.7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>`,
+  plate: `<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="3.6" stroke="currentColor" stroke-width="1.7"/></svg>`,
+  trash: `<svg viewBox="0 0 24 24" fill="none"><path d="M5 7h14M9 7V5.5a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 15 5.5V7m2 0-.7 12.1A2 2 0 0 1 14.3 21H9.7a2 2 0 0 1-2-1.9L7 7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
 };
 let modalRecipeId = null;
 function openRecipe(id) {
@@ -402,7 +436,7 @@ function openRecipe(id) {
       <ol class="rp-steps hidden" id="rp-steps">${(r.steps || []).map((s) => `<li>${esc(s)}</li>`).join('') || '<li class="subhead">Шаги не указаны.</li>'}</ol>
     </div>
     <div class="rp-actions">
-      <button class="primary" id="rp-diary">Съедено — в дневник</button>
+      <button class="primary" id="rp-diary">${ICN.plate}Съедено — в дневник</button>
       <button class="sq" id="rp-shop" aria-label="В покупки">${ICN.bag}</button>
       <button class="sq heart" id="rp-health" aria-label="В Здоровье">♥</button>
     </div>`;
@@ -422,9 +456,9 @@ function toggleFavorite(id) {
 }
 function openRecipeMenu(r) {
   openActionSheet([
-    { label: 'Съедено — в дневник', fn: () => addToDiary(r) },
-    { label: 'Добавить состав в покупки', fn: () => { r.ingredients.forEach((i) => addToShopping(i.id, i.g)); toast('✓ В покупки'); } },
-    { label: 'Удалить рецепт', warn: true, fn: () => { if (!confirm('Удалить рецепт?')) return; deleteRecipe(r.id); closeSheet('#recipe-modal'); } },
+    { label: 'Съедено — в дневник', icon: ICN.plate, fn: () => addToDiary(r) },
+    { label: 'Добавить состав в покупки', icon: ICN.bag, fn: () => { r.ingredients.forEach((i) => addToShopping(i.id, i.g)); toast('✓ В покупки'); } },
+    { label: 'Удалить рецепт', icon: ICN.trash, warn: true, fn: () => { if (!confirm('Удалить рецепт?')) return; deleteRecipe(r.id); closeSheet('#recipe-modal'); } },
   ]);
 }
 function deleteRecipe(id) {
@@ -530,12 +564,13 @@ async function startImport() {
   let resp, data;
   try {
     resp = await fetch(importApiUrl('/import-recipe'), {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }),
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-App-Key': authKey || '' }, body: JSON.stringify({ url }),
     });
     data = await resp.json().catch(() => null);
   } catch {
     return importFailed('Не удалось подключиться к серверу импорта. Проверьте адрес в Настройках и что сервер запущен.');
   }
+  if (resp.status === 401) return requireLoginAgain('Неверный пароль приложения — войдите заново.');
   if (!resp.ok) {
     const msg = (data && (data.detail?.message || data.message)) || `Ошибка сервера (${resp.status})`;
     return importFailed(msg);
@@ -550,13 +585,14 @@ function importFailed(message) {
   $('#import-progress').hidden = true;
 }
 async function pollImportJob(jobId) {
-  let data;
+  let resp, data;
   try {
-    const resp = await fetch(importApiUrl(`/import-recipe/${jobId}`));
+    resp = await fetch(importApiUrl(`/import-recipe/${jobId}`), { headers: { 'X-App-Key': authKey || '' } });
     data = await resp.json();
   } catch {
     return importFailed('Потеряна связь с сервером импорта');
   }
+  if (resp.status === 401) return requireLoginAgain('Неверный пароль приложения — войдите заново.');
   if (data.step) $('#import-progress-text').textContent = data.step;
   if (data.status === 'done') { presentImportReview(data.result); return; }
   if (data.status === 'error') {
@@ -713,14 +749,20 @@ function updateShopBadge() { const n = shopping.filter((s) => !s.checked).length
 // ============================================================================
 function bindSettings() {
   $('#settings-close').addEventListener('click', () => closeSheet('#settings-sheet'));
-  const g = getMacroGoals();
   const gi = $('#goal-input'), gp = $('#goal-p'), gf = $('#goal-f'), gc = $('#goal-c'), si = $('#shortcut-input');
   const saveGoals = debounce(() => {
     goalKcal = Math.max(0, parseInt(gi.value) || 0) || DEFAULT_GOAL; save(STORE.goal, goalKcal);
     macroGoals = { p: parseInt(gp.value) || 0, f: parseInt(gf.value) || 0, c: parseInt(gc.value) || 0 };
     if (macroGoals.p || macroGoals.f || macroGoals.c) save(STORE.macro, macroGoals); renderToday();
   }, 250);
-  [gi, gp, gf, gc].forEach((el) => el.addEventListener('input', saveGoals));
+  gi.addEventListener('input', () => {
+    const kcal = Math.max(0, parseInt(gi.value) || 0) || DEFAULT_GOAL;
+    const dm = defaultMacros(kcal);
+    gp.value = dm.p; gf.value = dm.f; gc.value = dm.c;
+    saveGoals();
+  });
+  [gp, gf, gc].forEach((el) => el.addEventListener('input', saveGoals));
+  $('#logout-btn').addEventListener('click', logout);
   si.addEventListener('input', debounce(() => { shortcutName = si.value.trim() || DEFAULT_SHORTCUT; save(STORE.shortcut, shortcutName); }, 250));
   $('#import-server-input').addEventListener('input', debounce(() => {
     importServerUrl = $('#import-server-input').value.trim().replace(/\/+$/, '') || DEFAULT_IMPORT_SERVER;
@@ -780,7 +822,7 @@ function logToHealth(kcal, p, f, c, label) {
 function openSheet(sel) { $(sel).classList.add('open'); document.body.style.overflow = 'hidden'; }
 function closeSheet(sel) { $(sel).classList.remove('open'); if (!$$('.sheet.open').length) document.body.style.overflow = ''; }
 function openActionSheet(items) {
-  $('#action-content').innerHTML = `<div class="action-group">${items.map((it, i) => `<button class="action-item ${it.warn ? 'warn' : ''}" data-i="${i}">${esc(it.label)}</button>`).join('')}</div><button class="action-cancel" data-cancel>Отмена</button>`;
+  $('#action-content').innerHTML = `<div class="action-group">${items.map((it, i) => `<button class="action-item ${it.warn ? 'warn' : ''}" data-i="${i}">${it.icon || ''}${esc(it.label)}</button>`).join('')}</div><button class="action-cancel" data-cancel>Отмена</button>`;
   $('#action-content').onclick = (e) => {
     if (e.target.dataset.cancel !== undefined) return closeSheet('#action-sheet');
     const b = e.target.closest('.action-item'); if (!b) return; closeSheet('#action-sheet'); const it = items[+b.dataset.i]; it && it.fn && it.fn();

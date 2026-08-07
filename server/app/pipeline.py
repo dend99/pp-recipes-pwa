@@ -119,7 +119,9 @@ async def run_pipeline(job_id: str, url: str, video_id: str, report_step) -> dic
             if match_id and match_id in known_ids:
                 recipe_ingredients.append({"id": match_id, "g": amount})
                 continue
-            new_ing = item.get("new_ingredient") or {}
+            new_ing = item.get("new_ingredient")
+            if not isinstance(new_ing, dict):
+                new_ing = {}
             cid = _slugify(item.get("name") or match_id or "ingredient")
             custom_ingredients[cid] = {
                 "id": cid,

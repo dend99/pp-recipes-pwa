@@ -18,6 +18,18 @@ YTDLP_COOKIES_FILE = os.environ.get("YTDLP_COOKIES_FILE", "").strip() or None
 
 PORT = int(os.environ.get("PORT", "8099"))
 
+# Общий секрет — закрывает /import-recipe от посторонних запросов на угадываемом
+# sslip.io-хосте. Пустая строка = аутентификация выключена (только для локальной разработки).
+APP_SHARED_SECRET = os.environ.get("APP_SHARED_SECRET", "").strip()
+AUTH_FAIL_LIMIT = int(os.environ.get("AUTH_FAIL_LIMIT", "8"))
+AUTH_FAIL_WINDOW_SEC = int(os.environ.get("AUTH_FAIL_WINDOW_SEC", "600"))
+AUTH_LOCKOUT_SEC = int(os.environ.get("AUTH_LOCKOUT_SEC", "1800"))
+
+ALLOWED_ORIGINS = [o.strip() for o in os.environ.get(
+    "ALLOWED_ORIGINS",
+    "https://dend99.github.io,http://localhost:8099,http://127.0.0.1:8099,http://localhost:8000,http://127.0.0.1:8000",
+).split(",") if o.strip()]
+
 DATA_DIR = BASE_DIR / "data"
 WORK_DIR = BASE_DIR / "work"
 DB_PATH = BASE_DIR / "cache.db"

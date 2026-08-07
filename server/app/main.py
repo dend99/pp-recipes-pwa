@@ -4,10 +4,11 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import config, pipeline, store, ytdlp_tools
+from .auth import require_app_key
 from .ratelimit import limiter
 from .schemas import ImportRequest
 
@@ -17,9 +18,9 @@ log = logging.getLogger("main")
 app = FastAPI(title="Recipe Import Pipeline")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=config.ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "X-App-Key"],
 )
 
 
@@ -77,7 +78,7 @@ async def health():
     return {"status": "ok", "groq_requests_remaining_today": limiter.remaining_today}
 
 
-@app.post("/import-recipe")
+@app.post("/import-recipe", dependencies=[Depends(require_app_key)])
 async def import_recipe(req: ImportRequest):
     try:
         video_id = ytdlp_tools.extract_video_id(req.url)
@@ -99,7 +100,7 @@ async def import_recipe(req: ImportRequest):
     return {"job_id": job_id, "video_id": video_id, "cached": False}
 
 
-@app.get("/import-recipe/{job_id}")
+@app.get("/import-recipe/{job_id}", dependencies=[Depends(require_app_key)])
 async def import_recipe_status(job_id: str):
     job = JOBS.get(job_id)
     if not job:
