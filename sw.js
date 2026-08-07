@@ -1,7 +1,8 @@
 /* sw.js — оффлайн-кэш для PWA «ПП Рецепты».
- * App-shell стратегия: при установке кэшируем ядро, при запросе — cache-first
- * с обновлением в фоне. Пользовательские рецепты живут в localStorage. */
-const CACHE = 'pp-recipes-v2';
+ * Стратегия: NETWORK-FIRST для своих ресурсов (чтобы свежий код и банк рецептов
+ * всегда доходили при наличии сети), с откатом в кэш для оффлайна.
+ * Пользовательские рецепты живут в localStorage. */
+const CACHE = 'pp-recipes-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -27,19 +28,34 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+// Позволяем странице попросить новый воркер активироваться немедленно.
+self.addEventListener('message', (e) => {
+  if (e.data === 'skip-waiting') self.skipWaiting();
+});
+
+async function networkFirst(request) {
+  try {
+    const res = await fetch(request);
+    if (res && res.ok && res.type === 'basic') {
+      const copy = res.clone();
+      caches.open(CACHE).then((c) => c.put(request, copy));
+    }
+    return res;
+  } catch (err) {
+    const cached = await caches.match(request);
+    if (cached) return cached;
+    if (request.mode === 'navigate') {
+      const shell = await caches.match('./index.html');
+      if (shell) return shell;
+    }
+    throw err;
+  }
+}
+
 self.addEventListener('fetch', (e) => {
   const { request } = e;
   if (request.method !== 'GET') return;
-  e.respondWith(
-    caches.match(request).then((cached) => {
-      const network = fetch(request).then((res) => {
-        if (res && res.status === 200 && res.type === 'basic') {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(request, copy));
-        }
-        return res;
-      }).catch(() => cached);
-      return cached || network;
-    })
-  );
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin) return; // сторонние запросы не трогаем
+  e.respondWith(networkFirst(request));
 });

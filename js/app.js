@@ -15,6 +15,7 @@ const STORE = {
   recipes: 'pp_recipes_v1',
   shopping: 'pp_shopping_v1',
   fridge: 'pp_fridge_v1',
+  deleted: 'pp_deleted_bank_v1', // id рецептов банка, удалённых пользователем
 };
 
 // ---- Состояние --------------------------------------------------------------
@@ -128,8 +129,9 @@ function init() {
     localStorage.setItem(STORE_SEEDV, String(SEED_VERSION));
   } else {
     recipes = stored;
-    migrateSeed(); // добавит новые рецепты банка в уже установленное приложение
+    migrateSeed();     // убрать старые демо-заглушки (разово)
   }
+  reconcileBank();     // ВСЕГДА гарантируем наличие всех рецептов банка (кроме удалённых)
   shopping = load(STORE.shopping, []);
   fridge = load(STORE.fridge, []);
 
@@ -138,6 +140,7 @@ function init() {
   bindRecipes();
   bindAddForm();
   bindShopping();
+  bindPullToRefresh();
 
   renderFridgeIngredients();
   renderRecipes();
@@ -145,6 +148,24 @@ function init() {
   renderAddIngredientOptions();
 
   registerSW();
+}
+
+/**
+ * Досборка банка: добавляет рецепты банка, которых нет в базе (по id),
+ * кроме тех, что пользователь удалил вручную. Идемпотентна, дешёвая —
+ * запускается при каждом старте и по свайпу вниз. Возвращает число добавленных.
+ */
+function reconcileBank() {
+  const deleted = new Set(load(STORE.deleted, []));
+  const have = new Set(recipes.map((r) => r.id));
+  const additions = SEED_RECIPES
+    .filter((r) => !have.has(r.id) && !deleted.has(r.id))
+    .map((r) => ({ ...r }));
+  if (additions.length) {
+    recipes = additions.concat(recipes);
+    try { save(STORE.recipes, recipes); } catch { /* нет места */ }
+  }
+  return additions.length;
 }
 
 /**
@@ -381,7 +402,7 @@ function openRecipe(id) {
         ${(r.steps || []).map((s) => `<li>${esc(s)}</li>`).join('')}
       </ol>
 
-      ${r.custom ? `<button class="btn btn-danger" id="modal-delete">🗑 Удалить рецепт</button>` : ''}
+      <button class="btn btn-danger" id="modal-delete">🗑 Удалить рецепт</button>
     </div>`;
 
   modal.classList.add('open');
@@ -395,6 +416,11 @@ function openRecipe(id) {
   const del = $('#modal-delete');
   if (del) del.addEventListener('click', () => {
     if (confirm('Удалить этот рецепт?')) {
+      // если это рецепт банка — запомним, чтобы досборка не вернула его обратно
+      if (r.bank || String(id).startsWith('bk')) {
+        const d = new Set(load(STORE.deleted, []));
+        d.add(id); save(STORE.deleted, [...d]);
+      }
       recipes = recipes.filter((x) => x.id !== id);
       save(STORE.recipes, recipes);
       closeModal(); renderRecipes();
@@ -736,11 +762,109 @@ function toast(msg) {
   toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
 }
 
-// ---- Service Worker ---------------------------------------------------------
+// ---- Service Worker + авто-обновление ---------------------------------------
 function registerSW() {
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  if (!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.register('./sw.js').then((reg) => {
+    reg.update();
+    reg.addEventListener('updatefound', () => {
+      const nw = reg.installing;
+      if (!nw) return;
+      nw.addEventListener('statechange', () => {
+        // новая версия установлена и уже есть активный воркер → применить сразу
+        if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+          nw.postMessage('skip-waiting');
+        }
+      });
+    });
+  }).catch(() => {});
+
+  // Когда НОВЫЙ воркер берёт управление (вышло обновление) — один раз
+  // перезагружаем страницу, чтобы подхватить свежий код и рецепты.
+  // Первый захват при самой первой установке (когда контроллера ещё не было)
+  // пропускаем, чтобы не дёргать пользователя лишней перезагрузкой.
+  let skipFirstClaim = !navigator.serviceWorker.controller;
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (skipFirstClaim) { skipFirstClaim = false; return; }
+    if (reloaded) return;
+    reloaded = true;
+    window.location.reload();
+  });
+}
+
+/** Проверить обновление приложения по сети (для pull-to-refresh). */
+async function checkAppUpdate() {
+  if (!('serviceWorker' in navigator)) return;
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (reg) await reg.update();
+  } catch { /* оффлайн — не страшно */ }
+}
+
+// ---- Pull-to-refresh (свайп вниз обновляет базу) ----------------------------
+function bindPullToRefresh() {
+  const ptr = $('#ptr');
+  if (!ptr) return;
+  const HIDDEN = -60;   // индикатор высотой ~60px, спрятан над экраном
+  const HOLD = 14;      // позиция во время обновления
+  const TRIGGER = 62;   // «показано» пикселей, при которых срабатывает
+  const MAX = 96;
+  let startY = 0, pulling = false, armed = false, busy = false;
+
+  const scrollTop = () => window.scrollY || document.documentElement.scrollTop || 0;
+
+  function blocked(target) {
+    if (busy) return true;
+    if ($('#recipe-modal').classList.contains('open')) return true;
+    const sc = target.closest && target.closest('.ing-cloud, .chips.scroll, .modal-card');
+    return !!(sc && sc.scrollTop > 0);
   }
+  // shown = сколько пикселей индикатор виден (0..MAX)
+  function place(shown, text, spin) {
+    ptr.style.transform = `translateY(${HIDDEN + shown}px)`;
+    if (text != null) ptr.querySelector('.ptr-text').textContent = text;
+    ptr.classList.toggle('spin', !!spin);
+  }
+
+  window.addEventListener('touchstart', (e) => {
+    if (scrollTop() > 0 || blocked(e.target)) { pulling = false; return; }
+    startY = e.touches[0].clientY;
+    pulling = true; armed = false;
+    ptr.style.transition = 'none';
+  }, { passive: true });
+
+  window.addEventListener('touchmove', (e) => {
+    if (!pulling) return;
+    const dy = e.touches[0].clientY - startY;
+    if (dy <= 0 || scrollTop() > 0) { pulling = false; ptr.style.transition = 'transform .25s'; place(0); return; }
+    e.preventDefault(); // придержать нативную прокрутку, пока тянем
+    const shown = Math.min(dy * 0.5, MAX);
+    armed = shown >= TRIGGER;
+    place(shown, armed ? 'Отпустите — обновить базу' : 'Потяните вниз ↓', false);
+  }, { passive: false });
+
+  window.addEventListener('touchend', async () => {
+    if (!pulling) return;
+    pulling = false;
+    ptr.style.transition = 'transform .28s';
+    if (!armed) { place(0); return; }
+
+    busy = true;
+    place(HOLD - HIDDEN, 'Обновление базы…', true); // держим индикатор видимым
+    const added = reconcileBank();
+    renderRecipes();
+    renderAddIngredientOptions();
+    await checkAppUpdate(); // при новой версии SW сам перезагрузит страницу
+    place(HOLD - HIDDEN, added ? `Добавлено: ${added}` : 'База актуальна', false);
+    setTimeout(() => {
+      place(0);
+      busy = false;
+      toast(added
+        ? `✓ База обновлена: +${added} (всего ${recipes.length})`
+        : `✓ База актуальна: ${recipes.length} рецептов`);
+    }, 700);
+  });
 }
 
 // ---- Глобальные обработчики модалки -----------------------------------------
