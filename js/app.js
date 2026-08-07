@@ -280,10 +280,11 @@ function updateFridgeCount() {
 
 function renderFridgeIngredients() {
   const q = $('#fridge-search').value.trim().toLowerCase();
+  const qWords = q ? q.replace(/[.,()/%]/g, ' ').split(/\s+/).filter(Boolean) : [];
   const box = $('#fridge-ingredients');
   const chosen = new Set(fridge);
   const list = INGREDIENTS
-    .filter(([, name]) => !q || name.toLowerCase().includes(q))
+    .filter(([, name]) => !qWords.length || textMatches(name, qWords))
     .sort((a, b) => a[1].localeCompare(b[1]));
 
   box.innerHTML = list.map(([id, name]) =>
@@ -367,19 +368,54 @@ function bindRecipes() {
   });
 }
 
+// ---- Поиск: устойчивое сопоставление слов (учёт мн.ч. и падежей) -----------
+// Индекс слов рецепта (название + теги + названия ингредиентов), кэш по id.
+const _searchIdx = new Map();
+function recipeWords(r) {
+  let w = _searchIdx.get(r.id);
+  if (w) return w;
+  const text = [
+    r.title,
+    (r.tags || []).join(' '),
+    r.ingredients.map((i) => ING_BY_ID[i.id]?.name || '').join(' '),
+  ].join(' ').toLowerCase();
+  w = text.replace(/[.,()/%]/g, ' ').split(/\s+/).filter(Boolean);
+  _searchIdx.set(r.id, w);
+  return w;
+}
+/** Совпадают ли слово-запрос и слово-цель: подстрока или общий корень.
+ * Ловит «помидоры→помидор», «яйца→яйцо», «огурцы→огурец», но НЕ цепляет
+ * короткие предлоги («с», «со», «на»), иначе поиск ловил бы почти всё. */
+function wordMatch(qw, w) {
+  if (qw.length >= 3 && w.includes(qw)) return true;                 // слово содержит запрос
+  if (qw.length >= 4 && w.length >= 4 && qw.includes(w)) return true; // запрос содержит основу слова
+  let k = 0; const m = Math.min(qw.length, w.length);
+  while (k < m && qw[k] === w[k]) k++;
+  if (m >= 3 && k >= 4) return true;              // длинный общий корень
+  if (m >= 3 && k >= 3 && k >= m - 1) return true; // короткие формы: яйца/яйцо, огурцы/огурец
+  return false;
+}
+/** Рецепт подходит, если КАЖДОЕ слово запроса нашло пару в словах рецепта. */
+function recipeMatches(r, qWords) {
+  const words = recipeWords(r);
+  return qWords.every((qw) => words.some((w) => wordMatch(qw, w)));
+}
+/** То же для произвольного текста (напр. названия продукта). */
+function textMatches(text, qWords) {
+  const ws = text.toLowerCase().replace(/[.,()/%]/g, ' ').split(/\s+/).filter(Boolean);
+  return qWords.every((qw) => ws.some((w) => wordMatch(qw, w)));
+}
+
 function renderRecipes() {
   const q = $('#recipe-search').value.trim().toLowerCase();
+  const qWords = q ? q.replace(/[.,()/%]/g, ' ').split(/\s+/).filter(Boolean) : [];
   const meal = $('#recipe-meal-filter .chip.active')?.dataset.meal || 'all';
   const box = $('#recipe-list');
 
   const filtered = recipes.filter((r) => {
     if (meal !== 'all' && r.meal !== meal) return false;
-    if (!q) return true;
-    // поиск по названию, тегам и ингредиентам
-    if (r.title.toLowerCase().includes(q)) return true;
-    if ((r.tags || []).some((t) => t.toLowerCase().includes(q))) return true;
-    return r.ingredients.some((i) =>
-      (ING_BY_ID[i.id]?.name || '').toLowerCase().includes(q));
+    if (!qWords.length) return true;
+    return recipeMatches(r, qWords);
   });
 
   $('#recipe-total').textContent = `${recipes.length} рецептов в базе`;

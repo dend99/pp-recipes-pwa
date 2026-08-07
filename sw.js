@@ -2,7 +2,7 @@
  * Стратегия: NETWORK-FIRST для своих ресурсов (чтобы свежий код и банк рецептов
  * всегда доходили при наличии сети), с откатом в кэш для оффлайна.
  * Пользовательские рецепты живут в localStorage. */
-const CACHE = 'pp-recipes-v5';
+const CACHE = 'pp-recipes-v6';
 const ASSETS = [
   './',
   './index.html',
