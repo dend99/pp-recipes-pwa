@@ -276,6 +276,22 @@ main { max-width: 640px; margin: 0 auto; }
 .help-steps li { padding: 4px 0; font-size: .92rem; }
 .help code, .help-steps code { background: var(--paper-2); padding: 1px 6px; border-radius: 6px; }
 
+/* Импорт рецепта из видео */
+.import-progress { display: flex; align-items: center; gap: 10px; justify-content: center; padding: 18px 0; color: var(--ink-2); font-size: .92rem; }
+.import-progress .ptr-spinner.spin { animation: rot .7s linear infinite; }
+.import-badges { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.tag.conf-high { background: var(--accent-tint); color: var(--accent); }
+.tag.conf-medium { background: var(--paper-2); color: var(--ink-2); }
+.tag.conf-low { background: rgba(180,83,42,.14); color: var(--warn); }
+.ing-row { background: var(--card); border-radius: var(--r-ctl); padding: 11px 14px; box-shadow: var(--shadow); margin-bottom: 7px; }
+.ing-row-main { display: flex; align-items: center; gap: 8px; }
+.ing-row-main input[type="text"] { flex: 1; min-width: 0; border: none; background: none; outline: none; font-size: .95rem; color: var(--ink); font-family: inherit; }
+.ing-row-main input[type="number"] { width: 64px; border: none; background: var(--paper-2); border-radius: 8px; padding: 7px 6px; font-size: .92rem; text-align: center; color: var(--ink); font-family: inherit; }
+.ing-row-custom { display: flex; align-items: center; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--hair); }
+.ing-row-custom .eyebrow { flex: none; margin-right: 2px; }
+.ing-row-custom input { width: 100%; min-width: 0; border: none; background: var(--paper-2); border-radius: 8px; padding: 6px; font-size: .82rem; text-align: center; color: var(--ink); font-family: inherit; }
+.ing-row-custom-cat { flex: 1.4; }
+
 /* Action sheet */
 .sheet.action { align-items: flex-end; }
 .action-card { width: 100%; max-width: 500px; margin: 0 auto 8px; padding: 0 8px calc(8px + env(safe-area-inset-bottom)); animation: up .3s var(--ease); }

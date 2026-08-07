@@ -17,10 +17,11 @@ const STORE = {
   recipes: 'pp_recipes_v1', shopping: 'pp_shopping_v1', fridge: 'pp_fridge_v1',
   deleted: 'pp_deleted_bank_v1', diary: 'pp_diary_v1', goal: 'pp_goal_v1',
   shortcut: 'pp_shortcut_v1', freq: 'pp_fridge_freq_v1', fav: 'pp_favorites_v1',
-  macro: 'pp_macro_goals_v1',
+  macro: 'pp_macro_goals_v1', customIng: 'pp_custom_ing_v1', importServer: 'pp_import_server_v1',
 };
 const DEFAULT_GOAL = 1800;
 const DEFAULT_SHORTCUT = 'ПП Здоровье';
+const DEFAULT_IMPORT_SERVER = 'http://localhost:8099';
 const SEED_VERSION = 2;
 const STORE_SEEDV = 'pp_seed_v';
 
@@ -30,6 +31,8 @@ let draftIngredients = [], draftPhoto = null;
 let goalKcal = DEFAULT_GOAL, macroGoals = null, shortcutName = DEFAULT_SHORTCUT;
 let freq = {}, favorites = [];
 let diaryDate = '';
+let customIngredients = {}, importServerUrl = DEFAULT_IMPORT_SERVER;
+let importDraft = null, importPollTimer = null;
 
 // ---- Утилиты ----------------------------------------------------------------
 const $ = (s, r = document) => r.querySelector(s);
@@ -111,10 +114,28 @@ function init() {
   shopping = load(STORE.shopping, []); fridge = load(STORE.fridge, []); diary = load(STORE.diary, {});
   goalKcal = load(STORE.goal, DEFAULT_GOAL); macroGoals = load(STORE.macro, null); shortcutName = load(STORE.shortcut, DEFAULT_SHORTCUT);
   freq = load(STORE.freq, {}); favorites = load(STORE.fav, []); diaryDate = todayStr();
+  customIngredients = load(STORE.customIng, {}); importServerUrl = load(STORE.importServer, DEFAULT_IMPORT_SERVER);
+  mergeCustomIngredients();
 
-  bindTabs(); bindToday(); bindFridge(); bindRecipes(); bindShopping(); bindAddSheet(); bindSettings(); bindPullToRefresh(); bindGlobal();
+  bindTabs(); bindToday(); bindFridge(); bindRecipes(); bindShopping(); bindAddSheet(); bindSettings(); bindImportSheet(); bindPullToRefresh(); bindGlobal();
   renderToday(); renderFridge(); renderRecipes(); renderShopping(); renderAddOptions();
   registerSW();
+}
+
+// Ингредиенты, добавленные при импорте рецептов из видео (не входят в базовые 114),
+// хранятся отдельно и подмешиваются в общую базу при каждом запуске.
+function mergeCustomIngredients() {
+  const knownIds = new Set(INGREDIENTS.map((row) => row[0]));
+  for (const id in customIngredients) {
+    const ing = customIngredients[id];
+    ING_BY_ID[id] = ing;
+    if (!knownIds.has(id)) INGREDIENTS.push([id, ing.name, ing.cat, ing.kcal, ing.p, ing.f, ing.c]);
+  }
+}
+function addCustomIngredient(ing) {
+  customIngredients[ing.id] = ing;
+  save(STORE.customIng, customIngredients);
+  mergeCustomIngredients();
 }
 
 function migrateSeed() {
@@ -370,7 +391,7 @@ function openRecipe(id) {
     <div class="rp-body">
       <div class="rp-eyebrow eyebrow">${MEALS[r.meal].label} · ${r.time} мин · ${r.servings} порц.</div>
       <h1 class="serif rp-title">${esc(r.title)}</h1>
-      <div class="rp-tags">${cleanTags(r).map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div>
+      <div class="rp-tags">${cleanTags(r).map((t) => `<span class="tag">${esc(t)}</span>`).join('')}${r.source_video_id ? `<a class="tag conf-${r.confidence || 'medium'}" href="${esc(r.source_url || '#')}" target="_blank" rel="noopener">▶ из видео</a>` : ''}</div>
       <div class="kbju-line">
         <div><b>${nut.per.kcal}</b><span>ккал</span></div><div><b>${nut.per.p}</b><span>белки</span></div>
         <div><b>${nut.per.f}</b><span>жиры</span></div><div><b>${nut.per.c}</b><span>углев.</span></div>
@@ -471,6 +492,195 @@ function saveNewRecipe(e) {
 }
 
 // ============================================================================
+// ИМПОРТ РЕЦЕПТА ИЗ ВИДЕО
+// ============================================================================
+function bindImportSheet() {
+  $('#recipe-import').addEventListener('click', openImportSheet);
+  $('#import-cancel').addEventListener('click', closeImportSheet);
+  $('#import-start').addEventListener('click', startImport);
+  $('#import-discard').addEventListener('click', closeImportSheet);
+  $('#import-save').addEventListener('click', saveImportedRecipe);
+  $('#imp-servings').addEventListener('input', renderImportKbju);
+  $('#imp-ings').addEventListener('click', (e) => {
+    const del = e.target.closest('[data-ing-del]'); if (!del) return;
+    importDraft.recipe.ingredients.splice(+del.dataset.ingDel, 1);
+    renderImportIngredients();
+  });
+  $('#imp-ings').addEventListener('input', onImportIngredientEdit);
+}
+function closeImportSheet() {
+  if (importPollTimer) { clearTimeout(importPollTimer); importPollTimer = null; }
+  closeSheet('#import-sheet');
+}
+function openImportSheet() {
+  $('#import-url').value = '';
+  $('#import-start').disabled = false; $('#import-start').textContent = 'Импортировать';
+  $('#import-progress').hidden = true;
+  $('#import-url-view').hidden = false; $('#import-review-view').hidden = true;
+  importDraft = null;
+  openSheet('#import-sheet');
+}
+function importApiUrl(path) { return (importServerUrl || DEFAULT_IMPORT_SERVER).replace(/\/+$/, '') + path; }
+
+async function startImport() {
+  const url = $('#import-url').value.trim();
+  if (!url) return toast('Вставьте ссылку на видео');
+  $('#import-start').disabled = true; $('#import-start').textContent = 'Отправляю…';
+  $('#import-progress').hidden = false; $('#import-progress-text').textContent = 'Отправляю ссылку на сервер…';
+  let resp, data;
+  try {
+    resp = await fetch(importApiUrl('/import-recipe'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }),
+    });
+    data = await resp.json().catch(() => null);
+  } catch {
+    return importFailed('Не удалось подключиться к серверу импорта. Проверьте адрес в Настройках и что сервер запущен.');
+  }
+  if (!resp.ok) {
+    const msg = (data && (data.detail?.message || data.message)) || `Ошибка сервера (${resp.status})`;
+    return importFailed(msg);
+  }
+  if (data.status === 'ok') { presentImportReview(data); return; } // из кэша — сразу готово
+  if (data.job_id) { pollImportJob(data.job_id); return; }
+  importFailed('Сервер вернул неожиданный ответ');
+}
+function importFailed(message) {
+  toast(message);
+  $('#import-start').disabled = false; $('#import-start').textContent = 'Импортировать';
+  $('#import-progress').hidden = true;
+}
+async function pollImportJob(jobId) {
+  let data;
+  try {
+    const resp = await fetch(importApiUrl(`/import-recipe/${jobId}`));
+    data = await resp.json();
+  } catch {
+    return importFailed('Потеряна связь с сервером импорта');
+  }
+  if (data.step) $('#import-progress-text').textContent = data.step;
+  if (data.status === 'done') { presentImportReview(data.result); return; }
+  if (data.status === 'error') {
+    const reasons = { bot_detected: 'YouTube заблокировал запрос (бот-детект). Попробуйте позже.', invalid_url: 'Не похоже на ссылку YouTube.' };
+    return importFailed((data.error && (reasons[data.error.reason] || data.error.message)) || 'Не удалось импортировать рецепт');
+  }
+  importPollTimer = setTimeout(() => pollImportJob(jobId), 1500);
+}
+
+function presentImportReview(result) {
+  importDraft = {
+    recipe: { ...result.recipe, ingredients: result.recipe.ingredients.map((i) => ({ ...i })) },
+    customIngredients: { ...(result.customIngredients || {}) },
+  };
+  $('#import-url-view').hidden = true; $('#import-review-view').hidden = false;
+
+  const conf = result.confidence || 'medium';
+  const confLabel = { high: 'Уверенно', medium: 'Есть неточности', low: 'Нужна проверка' }[conf] || conf;
+  $('#import-conf-badge').textContent = confLabel; $('#import-conf-badge').className = `tag conf-${conf}`;
+  const methodLabel = { subtitles: 'из субтитров', whisper: 'по аудио', multimodal: 'по кадрам видео' }[result.extraction_method] || result.extraction_method;
+  $('#import-method-badge').textContent = methodLabel;
+  $('#import-cached-badge').hidden = !result.cached;
+  const notesEl = $('#import-notes');
+  const notes = Array.isArray(result.notes) ? result.notes.join(' ') : result.notes;
+  notesEl.hidden = !notes; notesEl.textContent = notes || '';
+
+  $('#imp-title').value = importDraft.recipe.title || '';
+  $('#imp-meal').value = importDraft.recipe.meal || 'lunch';
+  $('#imp-time').value = importDraft.recipe.time || 15;
+  $('#imp-servings').value = importDraft.recipe.servings || 1;
+  $('#imp-steps').value = (importDraft.recipe.steps || []).join('\n');
+  $('#imp-tags').value = (importDraft.recipe.tags || []).join(', ');
+  renderImportIngredients();
+}
+
+function importIngredientName(id) {
+  if (importDraft.customIngredients[id]) return importDraft.customIngredients[id].name;
+  return ING_BY_ID[id]?.name || id;
+}
+function renderImportIngredients() {
+  const box = $('#imp-ings'), items = importDraft.recipe.ingredients;
+  box.innerHTML = items.length ? items.map((it, idx) => {
+    const custom = importDraft.customIngredients[it.id];
+    const name = importIngredientName(it.id);
+    const customBlock = custom ? `
+      <div class="ing-row-custom">
+        <span class="eyebrow">на 100г</span>
+        <input type="number" min="0" step="any" data-c="kcal" data-idx="${idx}" value="${custom.kcal}" placeholder="ккал">
+        <input type="number" min="0" step="any" data-c="p" data-idx="${idx}" value="${custom.p}" placeholder="Б">
+        <input type="number" min="0" step="any" data-c="f" data-idx="${idx}" value="${custom.f}" placeholder="Ж">
+        <input type="number" min="0" step="any" data-c="c" data-idx="${idx}" value="${custom.c}" placeholder="У">
+      </div>` : '';
+    return `<div class="ing-row" data-idx="${idx}">
+      <div class="ing-row-main">
+        ${custom
+          ? `<input type="text" data-name-idx="${idx}" value="${esc(name)}">`
+          : `<span>${esc(name)}</span>`}
+        <input type="number" min="1" data-g-idx="${idx}" value="${it.g}">
+        <span class="eyebrow">г</span>
+        <button type="button" class="draft-del" data-ing-del="${idx}">✕</button>
+      </div>${customBlock}
+    </div>`;
+  }).join('') : '<p class="subhead" style="color:var(--ink-3)">Ингредиенты не распознаны — добавьте вручную после сохранения.</p>';
+  renderImportKbju();
+}
+function onImportIngredientEdit(e) {
+  const t = e.target;
+  if (t.dataset.gIdx !== undefined) {
+    importDraft.recipe.ingredients[+t.dataset.gIdx].g = Math.max(1, parseFloat(t.value) || 1);
+    renderImportKbju();
+  } else if (t.dataset.nameIdx !== undefined) {
+    const id = importDraft.recipe.ingredients[+t.dataset.nameIdx].id;
+    if (importDraft.customIngredients[id]) importDraft.customIngredients[id].name = t.value;
+  } else if (t.dataset.c) {
+    const id = importDraft.recipe.ingredients[+t.dataset.idx].id;
+    if (importDraft.customIngredients[id]) { importDraft.customIngredients[id][t.dataset.c] = parseFloat(t.value) || 0; renderImportKbju(); }
+  }
+}
+function draftNutritionLookup(id) { return importDraft.customIngredients[id] || ING_BY_ID[id]; }
+function renderImportKbju() {
+  if (!importDraft) return;
+  const s = Math.max(1, parseInt($('#imp-servings').value) || 1);
+  const total = { kcal: 0, p: 0, f: 0, c: 0 };
+  for (const it of importDraft.recipe.ingredients) {
+    const ing = draftNutritionLookup(it.id); if (!ing) continue;
+    const k = it.g / 100;
+    total.kcal += ing.kcal * k; total.p += ing.p * k; total.f += ing.f * k; total.c += ing.c * k;
+  }
+  const per = { kcal: Math.round(total.kcal / s), p: Math.round(total.p / s * 10) / 10, f: Math.round(total.f / s * 10) / 10, c: Math.round(total.c / s * 10) / 10 };
+  $('#imp-kbju').innerHTML = `<div><b class="serif">${per.kcal}</b><span>ккал</span></div><div><b class="serif">${per.p}</b><span>белки</span></div><div><b class="serif">${per.f}</b><span>жиры</span></div><div><b class="serif">${per.c}</b><span>углев.</span></div>`;
+}
+
+function saveImportedRecipe() {
+  const title = $('#imp-title').value.trim(); if (!title) return toast('Введите название');
+  if (!importDraft.recipe.ingredients.length) return toast('Добавьте хотя бы один ингредиент');
+  const meal = $('#imp-meal').value;
+  const usedIds = new Set(importDraft.recipe.ingredients.map((i) => i.id));
+  for (const id in importDraft.customIngredients) {
+    if (usedIds.has(id)) addCustomIngredient(importDraft.customIngredients[id]);
+  }
+  const recipe = {
+    id: uid(), title, meal,
+    time: Math.max(1, parseInt($('#imp-time').value) || 15),
+    servings: Math.max(1, parseInt($('#imp-servings').value) || 1),
+    emoji: MEALS[meal].emoji,
+    ingredients: importDraft.recipe.ingredients.map((i) => ({ id: i.id, g: Math.round(i.g) })),
+    steps: $('#imp-steps').value.split('\n').map((s) => s.trim()).filter(Boolean),
+    tags: $('#imp-tags').value.split(',').map((s) => s.trim()).filter(Boolean),
+    image: importDraft.recipe.image || null,
+    custom: true,
+    source_url: importDraft.recipe.source_url,
+    source_video_id: importDraft.recipe.source_video_id,
+    extraction_method: importDraft.recipe.extraction_method,
+    confidence: importDraft.recipe.confidence,
+  };
+  recipes.unshift(recipe);
+  try { save(STORE.recipes, recipes); } catch { recipes.shift(); return toast('Недостаточно места в хранилище'); }
+  closeImportSheet();
+  $('#recipe-search').value = '';
+  $$('#recipe-meal-filter .seg').forEach((s) => s.classList.toggle('active', s.dataset.meal === 'all'));
+  renderRecipes(); switchTab('recipes'); toast('✓ Рецепт импортирован');
+}
+
+// ============================================================================
 // ПОКУПКИ
 // ============================================================================
 function bindShopping() {
@@ -512,6 +722,10 @@ function bindSettings() {
   }, 250);
   [gi, gp, gf, gc].forEach((el) => el.addEventListener('input', saveGoals));
   si.addEventListener('input', debounce(() => { shortcutName = si.value.trim() || DEFAULT_SHORTCUT; save(STORE.shortcut, shortcutName); }, 250));
+  $('#import-server-input').addEventListener('input', debounce(() => {
+    importServerUrl = $('#import-server-input').value.trim().replace(/\/+$/, '') || DEFAULT_IMPORT_SERVER;
+    save(STORE.importServer, importServerUrl);
+  }, 250));
   $('#export-btn').addEventListener('click', exportRecipes);
   $('#import-btn').addEventListener('click', () => $('#import-file').click());
   $('#import-file').addEventListener('change', importRecipes);
@@ -520,7 +734,7 @@ function bindSettings() {
 function openSettings() {
   const g = getMacroGoals();
   $('#goal-input').value = goalKcal || ''; $('#goal-p').value = g.p; $('#goal-f').value = g.f; $('#goal-c').value = g.c;
-  $('#shortcut-input').value = shortcutName || ''; openSheet('#settings-sheet');
+  $('#shortcut-input').value = shortcutName || ''; $('#import-server-input').value = importServerUrl || ''; openSheet('#settings-sheet');
 }
 
 // ---- Импорт / экспорт -------------------------------------------------------

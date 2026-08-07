@@ -99,9 +99,14 @@
           <h1 class="serif title-xl">Рецепты</h1>
           <p id="recipe-total" class="subhead"></p>
         </div>
-        <button id="recipe-add" class="round-btn accent" aria-label="Новый рецепт">
-          <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-        </button>
+        <div style="display:flex; gap:8px">
+          <button id="recipe-import" class="round-btn" aria-label="Импорт из видео">
+            <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="5.5" width="14" height="13" rx="2.4" stroke="currentColor" stroke-width="1.7"/><path d="M17.5 10.2l3-2v7.6l-3-2" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+          </button>
+          <button id="recipe-add" class="round-btn accent" aria-label="Новый рецепт">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
+        </div>
       </header>
 
       <label class="search">
@@ -213,6 +218,65 @@
     </form>
   </div></div>
 
+  <!-- ============ Шторка «Импорт рецепта из видео» ============ -->
+  <div id="import-sheet" class="sheet"><div class="sheet-card">
+    <div class="sheet-bar">
+      <button id="import-cancel" class="link">Отмена</button>
+      <div class="sheet-title">Импорт из видео</div>
+      <span style="width:40px"></span>
+    </div>
+    <div class="sheet-body">
+
+      <div id="import-url-view">
+        <p class="subhead" style="margin-bottom:14px">Вставьте ссылку на YouTube (Shorts или обычное видео) — сервер распознает рецепт из субтитров, аудио или кадров.</p>
+        <div class="list-group">
+          <label class="lg-row col"><span>Ссылка на видео</span><input id="import-url" type="url" placeholder="https://youtube.com/shorts/…" inputmode="url" autocomplete="off"></label>
+        </div>
+        <button type="button" id="import-start" class="btn btn-accent btn-block">Импортировать</button>
+        <div id="import-progress" class="import-progress" hidden>
+          <span class="ptr-spinner spin"></span><span id="import-progress-text">Начинаю…</span>
+        </div>
+      </div>
+
+      <div id="import-review-view" hidden>
+        <div class="import-badges">
+          <span id="import-conf-badge" class="tag"></span>
+          <span id="import-method-badge" class="tag"></span>
+          <span id="import-cached-badge" class="tag" hidden>из кэша</span>
+        </div>
+        <p id="import-notes" class="subhead" hidden></p>
+
+        <div class="list-group">
+          <label class="lg-row"><span>Название</span><input id="imp-title" type="text"></label>
+          <label class="lg-row"><span>Приём пищи</span>
+            <select id="imp-meal"><option value="breakfast">Завтрак</option><option value="lunch">Обед</option><option value="dinner">Ужин</option><option value="snack">Перекус</option></select>
+          </label>
+          <label class="lg-row"><span>Время, мин</span><input id="imp-time" type="number" min="1" inputmode="numeric"></label>
+          <label class="lg-row"><span>Порций</span><input id="imp-servings" type="number" min="1" inputmode="numeric"></label>
+        </div>
+
+        <div class="grp-head"><span class="eyebrow">Ингредиенты</span></div>
+        <div id="imp-ings" class="draft-list"></div>
+
+        <div class="kbju-preview">
+          <div class="eyebrow">КБЖУ на порцию</div>
+          <div class="kbju-row" id="imp-kbju"></div>
+        </div>
+
+        <div class="list-group">
+          <label class="lg-row col"><span>Шаги (каждый с новой строки)</span><textarea id="imp-steps" rows="4"></textarea></label>
+          <label class="lg-row"><span>Теги (через запятую)</span><input id="imp-tags" type="text"></label>
+        </div>
+
+        <div style="display:flex; gap:10px; margin-top:4px">
+          <button type="button" id="import-discard" class="btn btn-warn-ghost" style="flex:1">Не сохранять</button>
+          <button type="button" id="import-save" class="btn btn-accent" style="flex:2">Сохранить рецепт</button>
+        </div>
+      </div>
+
+    </div>
+  </div></div>
+
   <!-- ============ Шторка «Настройки» ============ -->
   <div id="settings-sheet" class="sheet"><div class="sheet-card">
     <div class="sheet-bar">
@@ -226,6 +290,11 @@
         <label class="lg-row"><span>Белки, г</span><input id="goal-p" type="number" min="0" inputmode="numeric"></label>
         <label class="lg-row"><span>Жиры, г</span><input id="goal-f" type="number" min="0" inputmode="numeric"></label>
         <label class="lg-row"><span>Углеводы, г</span><input id="goal-c" type="number" min="0" inputmode="numeric"></label>
+      </div>
+
+      <div class="grp-head"><span class="eyebrow">Импорт из видео</span></div>
+      <div class="list-group">
+        <label class="lg-row col"><span>Адрес сервера импорта</span><input id="import-server-input" type="url" placeholder="http://localhost:8099" inputmode="url" autocomplete="off"></label>
       </div>
 
       <div class="grp-head"><span class="eyebrow">Apple Health</span></div>
