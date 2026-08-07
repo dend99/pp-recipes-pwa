@@ -1,12 +1,13 @@
 /* sw.js — оффлайн-кэш для PWA «ПП Рецепты».
  * App-shell стратегия: при установке кэшируем ядро, при запросе — cache-first
  * с обновлением в фоне. Пользовательские рецепты живут в localStorage. */
-const CACHE = 'pp-recipes-v1';
+const CACHE = 'pp-recipes-v2';
 const ASSETS = [
   './',
   './index.html',
   './css/styles.css',
   './js/data.js',
+  './js/bank.js',
   './js/app.js',
   './manifest.webmanifest',
   './icons/icon-192.png',

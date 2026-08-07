@@ -73,6 +73,25 @@ function roundObj(o) {
   return r;
 }
 
+/**
+ * Единая точка получения КБЖУ рецепта.
+ * Если у рецепта есть авторские значения (recipe.nutrition, на порцию) — берём их,
+ * а вес порции считаем из ингредиентов. Иначе — считаем всё из ингредиентов.
+ */
+function nutritionOf(recipe) {
+  const comp = computeNutrition(recipe);
+  if (recipe.nutrition && typeof recipe.nutrition.kcal === 'number') {
+    const s = recipe.servings || 1;
+    const w = comp.per.weight; // вес порции из состава
+    const per = { kcal: recipe.nutrition.kcal, p: recipe.nutrition.p, f: recipe.nutrition.f, c: recipe.nutrition.c, weight: w };
+    const total = { kcal: per.kcal * s, p: per.p * s, f: per.f * s, c: per.c * s, weight: comp.total.weight };
+    const per100 = w ? roundObj({ kcal: per.kcal / w * 100, p: per.p / w * 100, f: per.f / w * 100, c: per.c / w * 100 })
+      : { kcal: 0, p: 0, f: 0, c: 0 };
+    return { total: roundObj(total), per: roundObj(per), per100, stated: true };
+  }
+  return { ...comp, stated: false };
+}
+
 // ---- Картинка-заглушка (SVG, оффлайн) --------------------------------------
 function placeholderImage(recipe) {
   const palettes = [
@@ -97,10 +116,20 @@ const recipeImage = (r) => r.image || placeholderImage(r);
 // ============================================================================
 // Инициализация
 // ============================================================================
+const SEED_VERSION = 2; // повышать при обновлении банка рецептов
+const STORE_SEEDV = 'pp_seed_v';
+
 function init() {
-  const userRecipes = load(STORE.recipes, null);
-  recipes = userRecipes ? userRecipes : SEED_RECIPES.map((r) => ({ ...r }));
-  if (!userRecipes) save(STORE.recipes, recipes);
+  const stored = load(STORE.recipes, null);
+  if (!stored) {
+    // первый запуск — засеиваем банком
+    recipes = SEED_RECIPES.map((r) => ({ ...r }));
+    save(STORE.recipes, recipes);
+    localStorage.setItem(STORE_SEEDV, String(SEED_VERSION));
+  } else {
+    recipes = stored;
+    migrateSeed(); // добавит новые рецепты банка в уже установленное приложение
+  }
   shopping = load(STORE.shopping, []);
   fridge = load(STORE.fridge, []);
 
@@ -116,6 +145,30 @@ function init() {
   renderAddIngredientOptions();
 
   registerSW();
+}
+
+/**
+ * Догоняющая миграция для уже установленных копий приложения:
+ * — удаляет старые рецепты-заглушки (id 'seed_…', не пользовательские);
+ * — добавляет рецепты банка, которых ещё нет (по id);
+ * — пользовательские рецепты не трогает.
+ */
+function migrateSeed() {
+  const sv = parseInt(localStorage.getItem(STORE_SEEDV) || '1', 10);
+  if (sv >= SEED_VERSION) return;
+
+  // 1) убрать старые демо-рецепты (seed_*), пользовательские (custom) сохранить
+  recipes = recipes.filter((r) => !(String(r.id).startsWith('seed_') && !r.custom));
+
+  // 2) добавить недостающие рецепты банка
+  const have = new Set(recipes.map((r) => r.id));
+  const additions = SEED_RECIPES.filter((r) => !have.has(r.id)).map((r) => ({ ...r }));
+  if (additions.length) recipes = additions.concat(recipes);
+
+  try {
+    save(STORE.recipes, recipes);
+    localStorage.setItem(STORE_SEEDV, String(SEED_VERSION));
+  } catch { /* нет места — оставим как есть */ }
 }
 
 // ---- Вкладки ----------------------------------------------------------------
@@ -200,7 +253,7 @@ function findRecipes() {
     .filter((x) => x.matched.length > 0)
     .sort((a, b) =>
       b.ratio - a.ratio || a.missing.length - b.missing.length ||
-      computeNutrition(a.r).per.kcal - computeNutrition(b.r).per.kcal);
+      nutritionOf(a.r).per.kcal - nutritionOf(b.r).per.kcal);
 
   if (scored.length === 0) {
     box.innerHTML = `<p class="muted">Подходящих рецептов нет. Добавьте ингредиенты или новый рецепт.</p>`;
@@ -209,7 +262,7 @@ function findRecipes() {
 
   box.innerHTML = `<h3 class="results-title">Нашлось рецептов: ${scored.length}</h3>` +
     scored.map(({ r, missing, ratio }) => {
-      const n = computeNutrition(r).per;
+      const n = nutritionOf(r).per;
       const pct = Math.round(ratio * 100);
       const missText = missing.length
         ? `<div class="miss">Докупить: ${missing.map((id) =>
@@ -272,7 +325,7 @@ function renderRecipes() {
   }
 
   box.innerHTML = filtered.map((r) => {
-    const n = computeNutrition(r).per;
+    const n = nutritionOf(r).per;
     return `<article class="rcard" data-open="${r.id}">
       <img class="rcard-img" src="${recipeImage(r)}" alt="">
       <div class="rcard-body">
@@ -296,7 +349,7 @@ function bindCardOpen(root) {
 function openRecipe(id) {
   const r = recipes.find((x) => x.id === id);
   if (!r) return;
-  const nut = computeNutrition(r);
+  const nut = nutritionOf(r);
   const modal = $('#recipe-modal');
 
   $('#modal-content').innerHTML = `
@@ -562,6 +615,13 @@ function importRecipes(e) {
         image: typeof raw.image === 'string' && raw.image.startsWith('data:') ? raw.image : null,
         custom: true,
       };
+      // сохранить авторские КБЖУ, если они были в файле
+      if (raw.nutrition && typeof raw.nutrition.kcal === 'number') {
+        recipe.nutrition = {
+          kcal: +raw.nutrition.kcal, p: +raw.nutrition.p || 0,
+          f: +raw.nutrition.f || 0, c: +raw.nutrition.c || 0,
+        };
+      }
       recipes.unshift(recipe);
       existingIds.add(recipe.id);
       added++;
